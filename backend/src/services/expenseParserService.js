@@ -2,7 +2,7 @@ const axios = require('axios');
 
 /**
  * Natural Language Expense Parser Service
- * Supports Groq LLaMA 3 (free), OpenAI GPT, and Rule-based parser.
+ * Supports Groq LLaMA models (free), OpenAI GPT, and Rule-based parser.
  */
 async function parseExpenseText(text) {
   if (!text || typeof text !== 'string' || !text.trim()) {
@@ -43,25 +43,38 @@ Return strictly valid JSON only:
   "payment_method": null
 }`;
 
-  // 1. Groq AI Parser (Free & Ultra Fast)
+  // 1. Groq AI Parser with automatic model fallback
   if (groqKey) {
-    try {
-      const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-        model: 'llama-3.3-70b-versatile',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: cleanText }
-        ],
-        temperature: 0.1,
-        response_format: { type: "json_object" }
-      }, {
-        headers: { 'Authorization': `Bearer ${groqKey}`, 'Content-Type': 'application/json' }
-      });
+    const groqModels = [
+      'llama-3.1-8b-instant',
+      'llama3-70b-8192',
+      'llama3-8b-8192',
+      'mixtral-8x7b-32768',
+      'llama-3.3-70b-versatile'
+    ];
 
-      const parsed = JSON.parse(response.data.choices[0].message.content);
-      return normalizeParsedOutput(parsed, cleanText);
-    } catch (err) {
-      console.error('Groq AI expense parsing error:', err.response?.data || err.message);
+    for (const model of groqModels) {
+      try {
+        const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+          model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: cleanText }
+          ],
+          temperature: 0.1,
+          response_format: { type: "json_object" }
+        }, {
+          headers: { 'Authorization': `Bearer ${groqKey}`, 'Content-Type': 'application/json' }
+        });
+
+        const jsonContent = response.data.choices[0]?.message?.content;
+        if (jsonContent) {
+          const parsed = JSON.parse(jsonContent);
+          return sanitizeParsedResult(parsed, cleanText);
+        }
+      } catch (err) {
+        console.warn(`Groq AI model ${model} error/not found, trying next model...`);
+      }
     }
   }
 
@@ -80,128 +93,82 @@ Return strictly valid JSON only:
         headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }
       });
 
-      const parsed = JSON.parse(response.data.choices[0].message.content);
-      return normalizeParsedOutput(parsed, cleanText);
+      const jsonContent = response.data.choices[0]?.message?.content;
+      if (jsonContent) {
+        const parsed = JSON.parse(jsonContent);
+        return sanitizeParsedResult(parsed, cleanText);
+      }
     } catch (err) {
-      console.error('OpenAI API expense parsing error:', err.response?.data || err.message);
+      console.error('OpenAI GPT expense parsing error:', err.response?.data || err.message);
     }
   }
 
-  // 3. Rule-based NLP fallback engine for English, Tamil & Tanglish
-  return ruleBasedParser(cleanText);
+  // 3. Robust Regex / Rule-Based Fallback
+  return fallbackRuleBasedParser(cleanText);
 }
 
-function ruleBasedParser(text) {
-  const lower = text.toLowerCase();
-  
+/**
+ * Ensures parsed data is safe, valid numbers & categories
+ */
+function sanitizeParsedResult(parsed, originalText) {
+  return {
+    type: ['expense', 'income', 'transfer'].includes(parsed.type?.toLowerCase()) ? parsed.type.toLowerCase() : 'expense',
+    amount: typeof parsed.amount === 'number' && !isNaN(parsed.amount) ? Math.abs(parsed.amount) : parseAmountFromText(originalText),
+    category: parsed.category || detectCategoryFromText(originalText),
+    subcategory: parsed.subcategory || null,
+    date: parsed.date || 'today',
+    description: parsed.description || originalText,
+    payment_method: parsed.payment_method || null
+  };
+}
+
+function parseAmountFromText(text) {
+  const match = text.match(/(\d+[\d,]*(\.\d+)?)/);
+  if (match) {
+    return parseFloat(match[1].replace(/,/g, ''));
+  }
+  return 0;
+}
+
+function detectCategoryFromText(text) {
+  const t = text.toLowerCase();
+  if (t.includes('petrol') || t.includes('diesel') || t.includes('auto') || t.includes('uber') || t.includes('bus')) return 'Transport';
+  if (t.includes('food') || t.includes('lunch') || t.includes('dinner') || t.includes('tea') || t.includes('hotel') || t.includes('swiggy') || t.includes('zomato')) return 'Food';
+  if (t.includes('rent') || t.includes('room')) return 'Rent';
+  if (t.includes('recharge') || t.includes('current') || t.includes('eb') || t.includes('bill') || t.includes('wifi')) return 'Bills';
+  if (t.includes('salary') || t.includes('income')) return 'Salary';
+  return 'Other';
+}
+
+function fallbackRuleBasedParser(text) {
+  const t = text.toLowerCase();
   let type = 'expense';
-  if (/\b(income|salary|credited|received|got paid|earned|சம்பளம்|வந்தது|வந்திருச்சு)\b/i.test(text)) {
+  if (t.includes('salary') || t.includes('income') || t.includes('credited') || t.includes('earned') || t.includes('வந்த')) {
     type = 'income';
-  } else if (/\b(transfer|transferred|sent to|moved to)\b/i.test(text)) {
-    type = 'transfer';
   }
 
-  let amount = 0;
-  const amountMatch = text.match(/(?:₹|rs\.?|rupees|inr)?\s*(\d+(?:,\d+)*(?:\.\d{1,2})?)\s*(?:rupees|rs\.?|inr|k)?/i);
-  if (amountMatch) {
-    let numStr = amountMatch[1].replace(/,/g, '');
-    let num = parseFloat(numStr);
-    if (!isNaN(num)) {
-      if (amountMatch[0].toLowerCase().includes('k')) {
-        num = num * 1000;
-      }
-      amount = num;
-    }
-  }
+  const amount = parseAmountFromText(text);
+  const category = detectCategoryFromText(text);
 
   let date = 'today';
-  if (/\b(nethu|yesterday|நேற்று)\b/i.test(lower)) {
+  if (t.includes('nethu') || t.includes('yesterday')) {
     date = 'yesterday';
   }
 
   let payment_method = null;
-  if (/\b(upi|gpay|phonepe|paytm|g-pay)\b/i.test(lower)) {
-    payment_method = 'UPI';
-  } else if (/\b(cash|cash-a|பணம்)\b/i.test(lower)) {
-    payment_method = 'Cash';
-  } else if (/\b(credit card|card)\b/i.test(lower)) {
-    payment_method = 'Credit Card';
-  } else if (/\b(sbi|hdfc|icici|bank|net banking)\b/i.test(lower)) {
-    payment_method = 'Bank';
-  }
-
-  let category = type === 'income' ? 'Salary' : 'Other';
-  let subcategory = null;
-  let description = 'Transaction';
-
-  if (/\b(petrol|diesel|fuel|bike|car|cab|auto|bus|train|taxi|uber|ola)\b/i.test(lower)) {
-    category = 'Transport';
-    if (lower.includes('petrol')) subcategory = 'Petrol';
-    else if (lower.includes('diesel')) subcategory = 'Diesel';
-    else if (lower.includes('bus')) subcategory = 'Bus';
-    else if (lower.includes('train')) subcategory = 'Train';
-    else if (lower.includes('taxi') || lower.includes('cab') || lower.includes('uber') || lower.includes('ola')) subcategory = 'Taxi';
-    description = subcategory || 'Transport';
-  } else if (/\b(lunch|dinner|breakfast|food|tea|coffee|snacks|restaurant|swiggy|zomato|hotel|groceries|dosa|biryani)\b/i.test(lower)) {
-    category = 'Food';
-    if (lower.includes('tea') || lower.includes('coffee') || lower.includes('snacks')) subcategory = 'Tea & Snacks';
-    else if (lower.includes('lunch')) subcategory = 'Lunch';
-    else if (lower.includes('dinner')) subcategory = 'Dinner';
-    else if (lower.includes('breakfast')) subcategory = 'Breakfast';
-    else if (lower.includes('groceries')) subcategory = 'Groceries';
-    description = subcategory || 'Food';
-  } else if (/\b(bill|current|electricity|eb|water|internet|wifi|recharge|mobile|gas)\b/i.test(lower)) {
-    category = 'Bills';
-    if (lower.includes('eb') || lower.includes('current') || lower.includes('electricity')) subcategory = 'Electricity';
-    else if (lower.includes('recharge') || lower.includes('mobile')) subcategory = 'Mobile';
-    else if (lower.includes('internet') || lower.includes('wifi')) subcategory = 'Internet';
-    description = subcategory || 'Bills';
-  } else if (/\b(dress|shirt|pants|clothes|shopping|amazon|flipkart|mall)\b/i.test(lower)) {
-    category = 'Shopping';
-    description = 'Shopping';
-  } else if (/\b(rent|house rent|office rent|வாடகை)\b/i.test(lower)) {
-    category = 'Rent';
-    description = 'House Rent';
-  } else if (/\b(salary|payday|stipend|சம்பளம்)\b/i.test(lower)) {
-    category = 'Salary';
-    type = 'income';
-    description = 'Salary';
-  } else if (/\b(movie|cinema|game|ott|netflix|prime)\b/i.test(lower)) {
-    category = 'Entertainment';
-    description = 'Entertainment';
-  } else if (/\b(doctor|hospital|medicine|pharmacy|tablet)\b/i.test(lower)) {
-    category = 'Healthcare';
-    description = 'Healthcare';
-  } else {
-    const words = text.split(' ').filter(w => w.length > 2 && !/^\d+$/.test(w));
-    if (words.length > 0) {
-      description = words[0];
-    }
-  }
+  if (t.includes('upi') || t.includes('gpay') || t.includes('phonepe') || t.includes('paytm')) payment_method = 'UPI';
+  else if (t.includes('cash')) payment_method = 'Cash';
+  else if (t.includes('card')) payment_method = 'Credit Card';
 
   return {
     type,
     amount,
     category,
-    subcategory,
+    subcategory: null,
     date,
-    description,
+    description: text,
     payment_method
   };
 }
 
-function normalizeParsedOutput(parsed, rawText) {
-  return {
-    type: ['expense', 'income', 'transfer'].includes(parsed.type?.toLowerCase()) ? parsed.type.toLowerCase() : 'expense',
-    amount: typeof parsed.amount === 'number' ? Math.abs(parsed.amount) : parseFloat(parsed.amount) || 0,
-    category: parsed.category || 'Other',
-    subcategory: parsed.subcategory || null,
-    date: parsed.date || 'today',
-    description: parsed.description || rawText.substring(0, 30),
-    payment_method: parsed.payment_method || null
-  };
-}
-
-module.exports = {
-  parseExpenseText
-};
+module.exports = { parseExpenseText };
