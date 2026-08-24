@@ -41,8 +41,9 @@ export function VoiceRecorderCard({ onDetectedExpense }) {
     setIsProcessing(true);
     setStatus('processing');
     try {
-      const langCodeOnly = selectedLanguage.split('-')[0];
-      const transcribeRes = await voiceService.transcribeAudio(blobToUse, liveTranscript || null, langCodeOnly);
+      // Always send audio blob to Groq Whisper — ignore Web Speech text
+      // (Web Speech text was causing garbage transcriptions on deployed servers)
+      const transcribeRes = await voiceService.transcribeAudio(blobToUse);
       const transcriptText = transcribeRes.transcript;
 
       const parseRes = await voiceService.parseTranscript(transcriptText);
@@ -115,8 +116,8 @@ export function VoiceRecorderCard({ onDetectedExpense }) {
             <label className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
               <Globe size={15} className="text-blue-600" /> Select Speech Language
             </label>
-            <span className="text-[10px] text-blue-700 font-bold bg-blue-100/80 px-2 py-0.5 rounded border border-blue-200">
-              Web Speech Ready
+            <span className="text-[10px] text-green-700 font-bold bg-green-100/80 px-2 py-0.5 rounded border border-green-200">
+              ✨ Whisper AI Ready
             </span>
           </div>
           <select

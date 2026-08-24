@@ -7,25 +7,21 @@ const FormData = require('form-data');
  * Supports Groq Whisper API (free), OpenAI Whisper API, and client-side browser Web Speech API.
  */
 async function transcribeAudio(fileBuffer, originalFilename = 'audio.webm', customText = null) {
-  // 1. If live browser transcript was captured via Web Speech API or custom text passed
-  if (customText && customText.trim().length > 0) {
-    return {
-      transcript: customText.trim(),
-      language: detectLanguage(customText),
-      source: 'web_speech_api'
-    };
-  }
+  // NOTE: We no longer short-circuit with browser Web Speech text.
+  // All transcription is now done by Groq Whisper for consistent quality.
 
   const groqKey = process.env.GROQ_API_KEY;
   const apiKey = process.env.SPEECH_API_KEY || process.env.OPENAI_API_KEY;
 
-  // 2. Groq Whisper API (Free & ultra-fast)
+  // 1. Groq Whisper API (Free, ultra-fast, handles Tamil/Tanglish/Hindi)
   if (groqKey) {
     try {
       const formData = new FormData();
       formData.append('file', fileBuffer, { filename: originalFilename, contentType: 'audio/webm' });
       formData.append('model', 'whisper-large-v3-turbo');
-      formData.append('prompt', 'Tamil, English, Tanglish expense tracker input. Examples: Nethu petrol-ku 600 rupees spend panniten, Spent 450 on lunch today, இன்று சம்பளம் 35000 வந்தது.');
+      // Prompt helps Whisper understand context and mixed-language input
+      formData.append('prompt', 'Tamil, English, Tanglish expense tracker. Examples: Nethu petrol-ku 600 rupees, Spent 450 on lunch, salary 35000, auto 50 rupees.');
+      // Do not force a language — Whisper auto-detects Tamil/Tanglish better without it
 
       const response = await axios.post('https://api.groq.com/openai/v1/audio/transcriptions', formData, {
         headers: {
