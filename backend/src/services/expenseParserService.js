@@ -18,8 +18,17 @@ async function parseExpenseText(text) {
   }
 
   const cleanText = text.trim();
+
+  // Sanitize the API key — removes any accidental quotes or spaces when pasted in Render
   const rawGroqKey = process.env.GROQ_API_KEY;
   const groqKey = rawGroqKey ? rawGroqKey.trim().replace(/^["']|["']$/g, '') : null;
+
+  // Debug: log key info to help verify it's set correctly on Render
+  if (groqKey) {
+    console.log(`Groq key check — length: ${groqKey.length}, prefix: ${groqKey.substring(0, 8)}...`);
+  } else {
+    console.warn('GROQ_API_KEY is missing or empty in environment variables.');
+  }
   const apiKey = process.env.AI_API_KEY || process.env.OPENAI_API_KEY;
 
   const systemPrompt = `You are an AI financial expense parser for a voice expense tracker app.
@@ -44,14 +53,12 @@ Return strictly valid JSON only:
   "payment_method": null
 }`;
 
-  // 1. Groq AI Parser with automatic model fallback & key sanitization
+  // 1. Groq AI Parser — only using currently active models (decommissioned ones removed)
   if (groqKey && groqKey.startsWith('gsk_')) {
     const groqModels = [
-      'llama-3.1-8b-instant',
-      'llama3-70b-8192',
-      'llama3-8b-8192',
-      'mixtral-8x7b-32768',
-      'llama-3.3-70b-versatile'
+      'llama-3.1-8b-instant',    // Fast 8B model — primary choice
+      'llama-3.3-70b-versatile', // Larger 70B model — fallback
+      'gemma2-9b-it',            // Google Gemma — secondary fallback
     ];
 
     for (const model of groqModels) {
