@@ -18,7 +18,8 @@ async function parseExpenseText(text) {
   }
 
   const cleanText = text.trim();
-  const groqKey = process.env.GROQ_API_KEY;
+  const rawGroqKey = process.env.GROQ_API_KEY;
+  const groqKey = rawGroqKey ? rawGroqKey.trim().replace(/^["']|["']$/g, '') : null;
   const apiKey = process.env.AI_API_KEY || process.env.OPENAI_API_KEY;
 
   const systemPrompt = `You are an AI financial expense parser for a voice expense tracker app.
@@ -43,8 +44,8 @@ Return strictly valid JSON only:
   "payment_method": null
 }`;
 
-  // 1. Groq AI Parser with automatic model fallback
-  if (groqKey) {
+  // 1. Groq AI Parser with automatic model fallback & key sanitization
+  if (groqKey && groqKey.startsWith('gsk_')) {
     const groqModels = [
       'llama-3.1-8b-instant',
       'llama3-70b-8192',
@@ -73,7 +74,12 @@ Return strictly valid JSON only:
           return sanitizeParsedResult(parsed, cleanText);
         }
       } catch (err) {
-        console.warn(`Groq AI model ${model} error/not found, trying next model...`);
+        const errDetails = err.response?.data || err.message;
+        console.warn(`Groq AI attempt (${model}) message:`, errDetails);
+        if (err.response?.status === 401) {
+          console.error('Groq API Key invalid or expired. Check GROQ_API_KEY in Render environment variables.');
+          break;
+        }
       }
     }
   }
@@ -103,7 +109,7 @@ Return strictly valid JSON only:
     }
   }
 
-  // 3. Robust Regex / Rule-Based Fallback
+  // 3. Robust Rule-Based Fallback
   return fallbackRuleBasedParser(cleanText);
 }
 
