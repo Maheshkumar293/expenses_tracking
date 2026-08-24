@@ -84,8 +84,8 @@ async function login(req, res) {
 
     // Search user by lowercased username or email
     const users = await query(
-      'SELECT * FROM users WHERE LOWER(username) = $1 OR LOWER(email) = $1',
-      [cleanIdentifier]
+      'SELECT * FROM users WHERE LOWER(username) = $1 OR LOWER(email) = $2',
+      [cleanIdentifier, cleanIdentifier]
     );
 
     if (users.length === 0) {

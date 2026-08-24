@@ -90,21 +90,21 @@ function seedDefaultCategoriesSqlite() {
 
 /**
  * Universal Query Adapter
- * Normalizes SQL queries ($1, $2 params for Postgres converted to ? for SQLite if needed)
+ * Normalizes SQL queries ($1, $2 params for Postgres mapped accurately to ? for SQLite)
  */
 async function query(sql, params = []) {
   if (dbMode === 'pg') {
     const res = await pgPool.query(sql, params);
     return res.rows;
   } else {
-    // Convert Postgres $1, $2 syntax to ? for sqlite if present
-    let sqliteSql = sql;
-    let index = 1;
-    while (sqliteSql.includes(`$${index}`)) {
-      sqliteSql = sqliteSql.replace(`$${index}`, '?');
-      index++;
-    }
-    // Handle RETURNING id clause in sqlite
+    // Correctly map PostgreSQL $1, $2 placeholders to SQLite ? while preserving parameter counts
+    const sqliteParams = [];
+    const sqliteSql = sql.replace(/\$(\d+)/g, (match, paramIndex) => {
+      const idx = parseInt(paramIndex, 10) - 1;
+      sqliteParams.push(params[idx]);
+      return '?';
+    });
+
     const isInsert = sqliteSql.trim().toUpperCase().startsWith('INSERT');
     const isUpdate = sqliteSql.trim().toUpperCase().startsWith('UPDATE');
     const isDelete = sqliteSql.trim().toUpperCase().startsWith('DELETE');
@@ -113,7 +113,7 @@ async function query(sql, params = []) {
 
     if (isInsert) {
       const stmt = sqliteDb.prepare(cleanSql);
-      const info = stmt.run(...params);
+      const info = stmt.run(...sqliteParams);
       if (sql.toUpperCase().includes('RETURNING')) {
         const getRow = sqliteDb.prepare('SELECT * FROM ' + getTableName(cleanSql) + ' WHERE id = ?');
         const row = getRow.get(info.lastInsertRowid);
@@ -122,11 +122,11 @@ async function query(sql, params = []) {
       return [{ id: info.lastInsertRowid, affectedRows: info.changes }];
     } else if (isUpdate || isDelete) {
       const stmt = sqliteDb.prepare(cleanSql);
-      const info = stmt.run(...params);
+      const info = stmt.run(...sqliteParams);
       return [{ affectedRows: info.changes }];
     } else {
       const stmt = sqliteDb.prepare(cleanSql);
-      const rows = stmt.all(...params);
+      const rows = stmt.all(...sqliteParams);
       return rows;
     }
   }
