@@ -4,24 +4,39 @@ const FormData = require('form-data');
 
 /**
  * Speech-to-Text Transcription Service
- * Supports Groq Whisper API (free), OpenAI Whisper API, and client-side browser Web Speech API.
+ * Supports live Web Speech API transcript, Groq Whisper API (free), and OpenAI Whisper API.
  */
-async function transcribeAudio(fileBuffer, originalFilename = 'audio.webm', customText = null) {
-  // NOTE: We no longer short-circuit with browser Web Speech text.
-  // All transcription is now done by Groq Whisper for consistent quality.
+async function transcribeAudio(fileBuffer, originalFilename = 'audio.webm', customText = null, languageCode = 'ta') {
+  // 1. If live browser transcript was captured via Web Speech API or custom text passed, return it!
+  // This guarantees the exact spoken text/language seen on screen is preserved.
+  if (customText && typeof customText === 'string' && customText.trim().length > 0) {
+    console.log(`Using live browser Web Speech transcript: "${customText.trim()}"`);
+    return {
+      transcript: customText.trim(),
+      language: detectLanguage(customText.trim()),
+      source: 'web_speech_api'
+    };
+  }
 
   const groqKey = process.env.GROQ_API_KEY;
   const apiKey = process.env.SPEECH_API_KEY || process.env.OPENAI_API_KEY;
 
-  // 1. Groq Whisper API (Free, ultra-fast, handles Tamil/Tanglish/Hindi)
-  if (groqKey) {
+  // Extract ISO 639-1 2-letter language code (e.g. "ta-IN" -> "ta", "hi-IN" -> "hi")
+  const langIso = languageCode ? languageCode.split('-')[0].toLowerCase() : 'ta';
+
+  // 2. Groq Whisper API (Free, ultra-fast)
+  if (groqKey && fileBuffer) {
     try {
       const formData = new FormData();
       formData.append('file', fileBuffer, { filename: originalFilename, contentType: 'audio/webm' });
       formData.append('model', 'whisper-large-v3-turbo');
-      // Prompt helps Whisper understand context and mixed-language input
+      
+      // Pass language code if not 'en' to prevent Whisper from translating to Hindi/English
+      if (langIso && langIso !== 'en') {
+        formData.append('language', langIso);
+      }
+      
       formData.append('prompt', 'Tamil, English, Tanglish expense tracker. Examples: Nethu petrol-ku 600 rupees, Spent 450 on lunch, salary 35000, auto 50 rupees.');
-      // Do not force a language — Whisper auto-detects Tamil/Tanglish better without it
 
       const response = await axios.post('https://api.groq.com/openai/v1/audio/transcriptions', formData, {
         headers: {
@@ -31,6 +46,7 @@ async function transcribeAudio(fileBuffer, originalFilename = 'audio.webm', cust
       });
 
       const transcript = response.data.text || '';
+      console.log(`Groq Whisper transcription (${langIso}): "${transcript}"`);
       return {
         transcript,
         language: detectLanguage(transcript),
@@ -42,12 +58,15 @@ async function transcribeAudio(fileBuffer, originalFilename = 'audio.webm', cust
   }
 
   // 3. OpenAI Whisper API
-  if (apiKey) {
+  if (apiKey && fileBuffer) {
     try {
       const formData = new FormData();
       formData.append('file', fileBuffer, { filename: originalFilename, contentType: 'audio/webm' });
       formData.append('model', 'whisper-1');
-      formData.append('prompt', 'Tamil, English, Tanglish expense tracker input. Examples: Nethu petrol-ku 600 rupees spend panniten, Spent 450 on lunch today, இன்று சம்பளம் 35000 வந்தது.');
+      if (langIso && langIso !== 'en') {
+        formData.append('language', langIso);
+      }
+      formData.append('prompt', 'Tamil, English, Tanglish expense tracker input.');
 
       const response = await axios.post('https://api.openai.com/v1/audio/transcriptions', formData, {
         headers: {
@@ -67,7 +86,7 @@ async function transcribeAudio(fileBuffer, originalFilename = 'audio.webm', cust
     }
   }
 
-  // 4. Fallback sample engine when no API keys are provided and browser speech API was not available
+  // 4. Fallback sample engine when no API keys or live audio transcript available
   const defaultSamples = [
     "Nethu petrol-ku 600 rupees spend panniten.",
     "Spent 450 on lunch today.",

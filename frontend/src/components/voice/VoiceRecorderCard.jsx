@@ -41,9 +41,8 @@ export function VoiceRecorderCard({ onDetectedExpense }) {
     setIsProcessing(true);
     setStatus('processing');
     try {
-      // Always send audio blob to Groq Whisper — ignore Web Speech text
-      // (Web Speech text was causing garbage transcriptions on deployed servers)
-      const transcribeRes = await voiceService.transcribeAudio(blobToUse);
+      const langCodeOnly = selectedLanguage.split('-')[0];
+      const transcribeRes = await voiceService.transcribeAudio(blobToUse, liveTranscript || null, langCodeOnly);
       const transcriptText = transcribeRes.transcript;
 
       const parseRes = await voiceService.parseTranscript(transcriptText);

@@ -39,7 +39,7 @@ IMPORTANT RULES:
    Default to "Other" if unsure.
 4. "subcategory": A short label like "Petrol", "Lunch", "Groceries", "Tea", or null if not mentioned.
 5. "date": "today", "yesterday", or a YYYY-MM-DD string. "Nethu" = "yesterday". Default to "today".
-6. "description": A short title for the expense (e.g. "Petrol", "Lunch", "Salary").
+6. "description": A short title for the expense. PRESERVE the exact words and language (Tamil, Tanglish, Hindi, or English) as spoken or written by the user. DO NOT translate the description into Hindi or any other language.
 7. "payment_method": "UPI", "Cash", "Credit Card", "Bank", "Wallet", or null. DO NOT guess — only set if explicitly mentioned.
 
 CRITICAL: You MUST always return a valid JSON object. NEVER return null, undefined, or plain text.

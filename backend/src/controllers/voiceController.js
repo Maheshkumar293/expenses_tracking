@@ -6,6 +6,7 @@ async function transcribe(req, res) {
   try {
     const file = req.file;
     const customText = req.body.text || req.query.text;
+    const languageCode = req.body.language || req.query.language || 'ta';
 
     let audioBuffer = null;
     let originalName = 'recording.webm';
@@ -15,7 +16,7 @@ async function transcribe(req, res) {
       originalName = file.originalname || 'recording.webm';
     }
 
-    const { transcript, language, source } = await transcribeAudio(audioBuffer, originalName, customText);
+    const { transcript, language, source } = await transcribeAudio(audioBuffer, originalName, customText, languageCode);
 
     return res.json({
       transcript,
