@@ -28,8 +28,20 @@ export const authService = {
   },
 
   async getMe() {
-    const response = await api.get('/auth/me');
-    return response.data;
+    const token = localStorage.getItem('token');
+    if (!token) {
+      return { user: null };
+    }
+    try {
+      const response = await api.get('/auth/me');
+      return response.data;
+    } catch (err) {
+      if (err.response?.status === 401) {
+        localStorage.removeItem('token');
+        return { user: null };
+      }
+      throw err;
+    }
   },
 
   async updateProfile(name, email) {
