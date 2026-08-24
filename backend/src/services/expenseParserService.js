@@ -56,9 +56,10 @@ Return strictly valid JSON only:
   // 1. Groq AI Parser — only using currently active models (decommissioned ones removed)
   if (groqKey && groqKey.startsWith('gsk_')) {
     const groqModels = [
-      'llama-3.1-8b-instant',    // Fast 8B model — primary choice
-      'llama-3.3-70b-versatile', // Larger 70B model — fallback
-      'gemma2-9b-it',            // Google Gemma — secondary fallback
+      'openai/gpt-oss-20b',    // Fast 20B model — primary choice
+      'groq/compound-mini',    // Groq's fast compound model — fallback
+      'groq/compound',         // Groq's full compound model — fallback
+      'qwen/qwen3.6-27b',     // Qwen large model — final fallback
     ];
 
     for (const model of groqModels) {
