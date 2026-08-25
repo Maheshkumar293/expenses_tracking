@@ -2,41 +2,71 @@ const fs = require('fs');
 const axios = require('axios');
 const FormData = require('form-data');
 
+const HALLUCINATION_PATTERNS = /\b(Shri|Viputrwanza|salaguyo|Amara\.org|subtitles|transcribed by|thank you for watching|watching!|Subscribe|english, shri)\b/i;
+
+function isHallucination(text) {
+  if (!text || typeof text !== 'string' || text.trim().length === 0) return true;
+  return HALLUCINATION_PATTERNS.test(text);
+}
+
 /**
  * Speech-to-Text Transcription Service
  * Supports live Web Speech API transcript, Groq Whisper API (free), and OpenAI Whisper API.
  */
-async function transcribeAudio(fileBuffer, originalFilename = 'audio.webm', customText = null, languageCode = 'ta') {
-  // 1. If live browser transcript was captured via Web Speech API or custom text passed, return it!
-  // This guarantees the exact spoken text/language seen on screen is preserved.
-  if (customText && typeof customText === 'string' && customText.trim().length > 0) {
-    console.log(`Using live browser Web Speech transcript: "${customText.trim()}"`);
-    return {
-      transcript: customText.trim(),
-      language: detectLanguage(customText.trim()),
-      source: 'web_speech_api'
-    };
-  }
-
+async function transcribeAudio(fileBuffer, originalFilename = 'audio.webm', customText = null, languageCode = 'ta-IN', isPreview = false) {
   const groqKey = process.env.GROQ_API_KEY;
   const apiKey = process.env.SPEECH_API_KEY || process.env.OPENAI_API_KEY;
 
-  // Extract ISO 639-1 2-letter language code (e.g. "ta-IN" -> "ta", "hi-IN" -> "hi")
-  const langIso = languageCode ? languageCode.split('-')[0].toLowerCase() : 'ta';
+  // 1. If live browser transcript preview was captured and passed, prioritize it to preserve exact on-screen user text!
+  if (customText && typeof customText === 'string' && customText.trim().length > 0 && !isHallucination(customText)) {
+    console.log(`Preserving live browser transcript: "${customText.trim()}"`);
+    return {
+      transcript: customText.trim(),
+      language: detectLanguage(customText.trim()),
+      source: 'web_speech_api',
+      mode: 'final'
+    };
+  }
 
-  // 2. Groq Whisper API (Free, ultra-fast)
-  if (groqKey && fileBuffer) {
+  const langIso = languageCode ? languageCode.split('-')[0].toLowerCase() : 'ta';
+  const isPureTamil = languageCode === 'ta-IN' || languageCode === 'ta';
+  const isTanglish = languageCode === 'en-IN' || languageCode === 'tanglish';
+  const mode = isPreview ? 'preview' : 'final';
+
+  // Build targeted prompt and language parameter for Whisper AI
+  let promptText = 'Tamil, English, Tanglish financial expense tracker.';
+  if (isPureTamil) {
+    promptText = 'செலவு கணக்கு விவரங்கள். நேற்று பெட்ரோல் 600 ரூபாய், சாப்பாடு 450 ரூபாய், டீ 20 ரூபாய், பால் 30 ரூபாய், ஆட்டோ 50 ரூபாய், சம்பளம் 35000, காய்கறி 120 ரூபாய், வாடகை 8000.';
+  } else if (isTanglish) {
+    promptText = 'Tamil Tanglish English financial expense items. Examples: Nethu petrol-ku 600 rupees spend panniten, lunch 450 rupees, salary 35000 came, tea 20 rupees, auto 50 rupees.';
+  } else if (langIso === 'hi') {
+    promptText = 'खर्च का विवरण। कल पेट्रोल 600 रुपये, लंच 450 रुपये, सैलरी 35000, चाय 20 रुपये, ऑटो 50 रुपये।';
+  }
+
+  const fileExt = (originalFilename || 'recording.webm').split('.').pop().toLowerCase();
+  let contentType = 'audio/webm';
+  if (fileExt === 'mp4' || fileExt === 'm4a') contentType = 'audio/mp4';
+  else if (fileExt === 'wav') contentType = 'audio/wav';
+  else if (fileExt === 'ogg') contentType = 'audio/ogg';
+  else if (fileExt === 'aac') contentType = 'audio/aac';
+
+  // 1. Primary: Groq Whisper API (Free, ultra-fast, deterministic temperature=0)
+  if (groqKey && fileBuffer && fileBuffer.length > 500) {
     try {
       const formData = new FormData();
-      formData.append('file', fileBuffer, { filename: originalFilename, contentType: 'audio/webm' });
-      formData.append('model', 'whisper-large-v3-turbo');
+      formData.append('file', fileBuffer, { filename: originalFilename, contentType });
       
-      // Pass language code if not 'en' to prevent Whisper from translating to Hindi/English
-      if (langIso && langIso !== 'en') {
+      const model = isPreview ? 'whisper-large-v3-turbo' : 'whisper-large-v3';
+      formData.append('model', model);
+      formData.append('temperature', '0'); // Greedy deterministic decoding (prevents irrelevant word hallucinations)
+
+      if (isPureTamil) {
+        formData.append('language', 'ta');
+      } else if (langIso && !['en', 'ta'].includes(langIso)) {
         formData.append('language', langIso);
       }
       
-      formData.append('prompt', 'Tamil, English, Tanglish expense tracker. Examples: Nethu petrol-ku 600 rupees, Spent 450 on lunch, salary 35000, auto 50 rupees.');
+      formData.append('prompt', promptText);
 
       const response = await axios.post('https://api.groq.com/openai/v1/audio/transcriptions', formData, {
         headers: {
@@ -45,28 +75,36 @@ async function transcribeAudio(fileBuffer, originalFilename = 'audio.webm', cust
         }
       });
 
-      const transcript = response.data.text || '';
-      console.log(`Groq Whisper transcription (${langIso}): "${transcript}"`);
-      return {
-        transcript,
-        language: detectLanguage(transcript),
-        source: 'groq_whisper'
-      };
+      const rawTranscript = response.data.text || '';
+      if (rawTranscript.trim().length > 0 && !isHallucination(rawTranscript)) {
+        console.log(`Groq Whisper ${mode} transcription (${model}, ${languageCode}): "${rawTranscript.trim()}"`);
+        return {
+          transcript: rawTranscript.trim(),
+          language: detectLanguage(rawTranscript),
+          source: isPreview ? 'groq_whisper_preview' : 'groq_whisper',
+          mode
+        };
+      } else if (isHallucination(rawTranscript)) {
+        console.warn(`Groq Whisper returned hallucinated output (discarded): "${rawTranscript}"`);
+      }
     } catch (err) {
-      console.error('Groq Whisper API error:', err.response?.data || err.message);
+      console.error(`Groq Whisper API ${mode} error:`, err.response?.data || err.message);
     }
   }
 
-  // 3. OpenAI Whisper API
-  if (apiKey && fileBuffer) {
+  // 2. Secondary Fallback: OpenAI Whisper API
+  if (apiKey && fileBuffer && fileBuffer.length > 500) {
     try {
       const formData = new FormData();
-      formData.append('file', fileBuffer, { filename: originalFilename, contentType: 'audio/webm' });
+      formData.append('file', fileBuffer, { filename: originalFilename, contentType });
       formData.append('model', 'whisper-1');
-      if (langIso && langIso !== 'en') {
+      formData.append('temperature', '0');
+      if (isPureTamil) {
+        formData.append('language', 'ta');
+      } else if (langIso && !['en', 'ta'].includes(langIso)) {
         formData.append('language', langIso);
       }
-      formData.append('prompt', 'Tamil, English, Tanglish expense tracker input.');
+      formData.append('prompt', promptText);
 
       const response = await axios.post('https://api.openai.com/v1/audio/transcriptions', formData, {
         headers: {
@@ -75,18 +113,33 @@ async function transcribeAudio(fileBuffer, originalFilename = 'audio.webm', cust
         }
       });
 
-      const transcript = response.data.text || '';
-      return {
-        transcript,
-        language: detectLanguage(transcript),
-        source: 'openai_whisper'
-      };
+      const rawTranscript = response.data.text || '';
+      if (rawTranscript.trim().length > 0 && !isHallucination(rawTranscript)) {
+        console.log(`OpenAI Whisper ${mode} transcription (${langIso}): "${rawTranscript.trim()}"`);
+        return {
+          transcript: rawTranscript.trim(),
+          language: detectLanguage(rawTranscript),
+          source: isPreview ? 'openai_whisper_preview' : 'openai_whisper',
+          mode
+        };
+      }
     } catch (err) {
-      console.error('OpenAI Whisper API error:', err.response?.data || err.message);
+      console.error(`OpenAI Whisper API ${mode} error:`, err.response?.data || err.message);
     }
   }
 
-  // 4. Fallback sample engine when no API keys or live audio transcript available
+  // 3. Tertiary Fallback: Live browser transcript captured via Web Speech API (if present & valid)
+  if (customText && typeof customText === 'string' && customText.trim().length > 0 && !isHallucination(customText)) {
+    console.log(`Using custom text fallback (${mode}): "${customText.trim()}"`);
+    return {
+      transcript: customText.trim(),
+      language: detectLanguage(customText.trim()),
+      source: 'web_speech_api',
+      mode
+    };
+  }
+
+  // 4. Quaternary Fallback: Sample engine when no audio transcription succeeded
   const defaultSamples = [
     "Nethu petrol-ku 600 rupees spend panniten.",
     "Spent 450 on lunch today.",
@@ -101,7 +154,8 @@ async function transcribeAudio(fileBuffer, originalFilename = 'audio.webm', cust
   return {
     transcript,
     language: detectLanguage(transcript),
-    source: 'fallback_engine'
+    source: 'fallback_engine',
+    mode
   };
 }
 

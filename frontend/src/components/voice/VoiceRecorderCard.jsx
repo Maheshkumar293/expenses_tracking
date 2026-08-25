@@ -12,6 +12,8 @@ export function VoiceRecorderCard({ onDetectedExpense }) {
     audioBlob,
     audioUrl,
     liveTranscript,
+    setLiveTranscript,
+    livePreviewNote,
     errorMessage,
     startRecording,
     stopRecording,
@@ -41,9 +43,13 @@ export function VoiceRecorderCard({ onDetectedExpense }) {
     setIsProcessing(true);
     setStatus('processing');
     try {
-      const langCodeOnly = selectedLanguage.split('-')[0];
-      const transcribeRes = await voiceService.transcribeAudio(blobToUse, liveTranscript || null, langCodeOnly);
-      const transcriptText = transcribeRes.transcript;
+      // Pass liveTranscript if present to preserve exact on-screen recognized text
+      const transcribeRes = await voiceService.transcribeAudio(blobToUse, liveTranscript || null, selectedLanguage, false);
+      const transcriptText = transcribeRes.transcript || liveTranscript;
+
+      if (setLiveTranscript && transcriptText) {
+        setLiveTranscript(transcriptText);
+      }
 
       const parseRes = await voiceService.parseTranscript(transcriptText);
 
@@ -116,7 +122,7 @@ export function VoiceRecorderCard({ onDetectedExpense }) {
               <Globe size={15} className="text-blue-600" /> Select Speech Language
             </label>
             <span className="text-[10px] text-green-700 font-bold bg-green-100/80 px-2 py-0.5 rounded border border-green-200">
-              ✨ Whisper AI Ready
+              ⚡ AI Live Preview · Groq Whisper
             </span>
           </div>
           <select
@@ -166,14 +172,20 @@ export function VoiceRecorderCard({ onDetectedExpense }) {
                 </span>
               </div>
 
-              {liveTranscript && (
+              {liveTranscript ? (
                 <div className="mt-3 bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5 text-xs text-blue-900 max-w-sm shadow-xs">
                   <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wider block mb-0.5">
-                    Recognized Speech ({selectedLanguage})
+                    Live Preview ({selectedLanguage})
                   </span>
                   <p className="font-bold text-slate-900 text-sm">"{liveTranscript}"</p>
                 </div>
-              )}
+              ) : livePreviewNote ? (
+                <div className="mt-3 bg-amber-50 border border-amber-200/80 rounded-xl px-4 py-2 text-xs text-amber-900 max-w-sm shadow-xs">
+                  <p className="font-medium text-amber-800 text-[11px]">
+                    ℹ️ {livePreviewNote}
+                  </p>
+                </div>
+              ) : null}
 
               {/* Wave Bar Visualizer */}
               <div className="flex items-center gap-1.5 mt-4 h-8">
@@ -214,7 +226,7 @@ export function VoiceRecorderCard({ onDetectedExpense }) {
             {liveTranscript && (
               <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-900">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-blue-700 block mb-1">
-                  Recognized Speech ({selectedLanguage})
+                  Live Browser Preview ({selectedLanguage})
                 </span>
                 <p className="font-bold text-slate-900 text-sm">"{liveTranscript}"</p>
               </div>

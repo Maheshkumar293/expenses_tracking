@@ -7,6 +7,7 @@ async function transcribe(req, res) {
     const file = req.file;
     const customText = req.body.text || req.query.text;
     const languageCode = req.body.language || req.query.language || 'ta';
+    const isPreview = req.body.isPreview === 'true' || req.body.isPreview === true || req.query.isPreview === 'true';
 
     let audioBuffer = null;
     let originalName = 'recording.webm';
@@ -16,12 +17,13 @@ async function transcribe(req, res) {
       originalName = file.originalname || 'recording.webm';
     }
 
-    const { transcript, language, source } = await transcribeAudio(audioBuffer, originalName, customText, languageCode);
+    const { transcript, language, source, mode } = await transcribeAudio(audioBuffer, originalName, customText, languageCode, isPreview);
 
     return res.json({
       transcript,
       language,
-      source
+      source,
+      mode: mode || (isPreview ? 'preview' : 'final')
     });
   } catch (err) {
     console.error('Voice transcribe error:', err);
