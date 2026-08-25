@@ -110,22 +110,20 @@ export function useVoiceRecorder() {
       setLivePreviewNote('Live preview unsupported in this browser. Recording will be transcribed by Groq Whisper AI.');
     }
 
-    // 2. MediaRecorder continuous audio capture with Mobile Audio Constraints
+    // 2. MediaRecorder continuous audio capture for Mobile & Desktop
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error('Microphone access is not supported in this browser environment');
       }
 
-      const audioConstraints = {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        channelCount: 1
-      };
-
       let stream;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true
+          }
+        });
       } catch (e) {
         stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       }
@@ -146,6 +144,10 @@ export function useVoiceRecorder() {
       mediaRecorder.onstop = () => {
         const finalMime = mimeTypeRef.current || 'audio/webm';
         const blob = new Blob(audioChunksRef.current, { type: finalMime });
+        if (blob.size < 1000) {
+          console.warn('Recorded audio blob is tiny/empty:', blob.size);
+          setErrorMessage('Recording was too short or silent. Please speak clearly into microphone.');
+        }
         const url = URL.createObjectURL(blob);
         setAudioBlob(blob);
         setAudioUrl(url);
@@ -157,7 +159,7 @@ export function useVoiceRecorder() {
         }
       };
 
-      mediaRecorder.start(1000); // collect 1s chunks continuously
+      mediaRecorder.start(); // Continuous recording buffer for mobile stability
       setStatus('recording');
       setRecordingTime(0);
 
